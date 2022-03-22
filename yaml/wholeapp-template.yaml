@@ -1,0 +1,160 @@
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: wholeapp-pvc
+  namespace: docker
+  annotations:
+    volume.beta.kubernetes.io/storage-class: "nfs-sc"
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wholeapp
+  namespace: docker
+  labels:
+    applicationName: wholeapp
+    applicationType: throughImage
+    versionName: v1
+  annotations:
+    applicationCnName: wholeapp
+spec:
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      applicationName: wholeapp
+      versionName: v1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 25%
+  template:
+    metadata:
+      name: wholeapp
+      namespace: docker
+      creationTimestamp: null
+      labels:
+        applicationName: wholeapp
+        applicationType: throughImage
+        versionName: v1
+      annotations:
+        applicationCnName: wholeapp
+    spec:
+      volumes:
+      - name: cm-test
+        configMap:
+          name: nginx.conf
+          items:
+          - key: nginx.conf
+            path: nginx.conf
+          defaultMode: 420
+      - name: data
+        persistentVolumeClaim:
+          claimName: wholeapp-pvc
+      containers:
+      - name: wholeapp
+        image: www.harbor.mobi/public/nginx:v1
+        workingDir: /opt
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        resources:
+          limits:
+            cpu: 200m
+            memory: 256M
+          requests:
+            cpu: 200m
+            memory: 256M
+        volumeMounts:
+        - name: cm-test
+          mountPath: /opt/nginx.conf
+          subPath: nginx.conf
+        - name: data
+          mountPath: /nginx
+        livenessProbe:
+          tcpSocket:
+            port: 80
+          initialDelaySeconds: 10
+          timeoutSeconds: 1
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /index.html
+            port: 80
+            scheme: HTTP
+          initialDelaySeconds: 10
+          timeoutSeconds: 1
+          periodSeconds: 10
+          successThreshold: 1
+          failureThreshold: 3
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        imagePullPolicy: IfNotPresent
+        securityContext: {}
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirst
+      securityContext: {}
+      imagePullSecrets:
+      - name: harbor
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: nodeName
+                operator: In
+                values:
+                - node1
+        podAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 1
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: kubernetes.customized/pod-affinity
+                  operator: In
+                  values:
+                  - pipeline-NaN
+              namespaces:
+              - docker
+              topologyKey: kubernetes.io/hostname
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: kubernetes.customized/pod-affinity
+                operator: In
+                values:
+                - dlis-NaN
+            namespaces:
+            - docker
+            topologyKey: kubernetes.io/hostname
+      schedulerName: default-scheduler
+      hostAliases:
+      - ip: 10.10.39.123
+        hostnames:
+        - myapp.ingress.com
+      dnsConfig:
+        nameservers:
+        - 114.114.114.114
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: nodeName
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchExpressions:
+          - key: applicationName
+            operator: In
+            values:
+            - wholeapp
+  progressDeadlineSeconds: 600
